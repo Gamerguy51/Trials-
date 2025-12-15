@@ -1,0 +1,374 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Trials-ish 2D (Planck.js)</title>
+  <style>
+    html,body{margin:0;height:100%;overflow:hidden;background:#0b0f14}
+    canvas{display:block;width:100vw;height:100vh;touch-action:none}
+    .hud{position:fixed;left:12px;top:12px;color:#c7d2fe;font:14px system-ui;background:rgba(15,23,42,.65);
+      border:1px solid rgba(148,163,184,.25);border-radius:10px;padding:10px 12px}
+    .muted{color:#94a3b8}
+    .btns{position:fixed;left:0;right:0;bottom:0;height:34vh;display:flex;justify-content:space-between;gap:14px;
+      align-items:flex-end;padding:18px;pointer-events:none}
+    .cluster{display:flex;gap:14px;pointer-events:none}
+    .rightcol{display:flex;flex-direction:column;gap:14px;align-items:flex-end}
+    .btn{width:92px;height:92px;border-radius:18px;background:rgba(30,41,59,.60);
+      border:1px solid rgba(148,163,184,.28);box-shadow:0 10px 30px rgba(0,0,0,.35);
+      display:grid;place-items:center;color:#e2e8f0;font-weight:800;pointer-events:auto;user-select:none}
+    .btn.small{width:72px;height:72px;border-radius:16px}
+    .btn:active{transform:translateY(1px);background:rgba(51,65,85,.75)}
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div class="hud">
+    <div><b>Trials-ish 2D (Planck.js)</b></div>
+    <div class="muted">Touch: ◀/▶ throttle, ▲/▼ lean, R reset</div>
+    <div id="stats" class="muted"></div>
+  </div>
+
+  <div class="btns">
+    <div class="cluster">
+      <div class="btn" id="left">◀</div>
+      <div class="btn" id="right">▶</div>
+    </div>
+    <div class="rightcol">
+      <div class="cluster">
+        <div class="btn small" id="up">▲</div>
+        <div class="btn small" id="down">▼</div>
+      </div>
+      <div class="btn small" id="reset">R</div>
+    </div>
+  </div>
+
+  <!-- Planck.js (Box2D-style physics) -->
+  <script src="https://unpkg.com/planck-js@0.3.0/dist/planck.min.js"></script>
+  <script>
+  (() => {
+    const pl = planck;
+    const Vec2 = pl.Vec2;
+
+    // Canvas setup
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d', { alpha:false });
+
+    function resize() {
+      const dpr = Math.max(1, Math.min(3, devicePixelRatio || 1));
+      canvas.width = Math.floor(innerWidth * dpr);
+      canvas.height = Math.floor(innerHeight * dpr);
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    addEventListener('resize', resize, {passive:true});
+    resize();
+    addEventListener('touchmove', e => e.preventDefault(), {passive:false});
+
+    // Input
+    const input = { left:false, right:false, up:false, down:false };
+    function bindBtn(id, key) {
+      const el = document.getElementById(id);
+      const down = (e)=>{ e.preventDefault(); input[key]=true; };
+      const up = (e)=>{ e.preventDefault(); input[key]=false; };
+      el.addEventListener('pointerdown', down);
+      addEventListener('pointerup', up);
+      addEventListener('pointercancel', up);
+      addEventListener('pointerleave', up);
+    }
+    bindBtn('left','left'); bindBtn('right','right'); bindBtn('up','up'); bindBtn('down','down');
+
+    addEventListener('keydown', (e) => {
+      const k = e.key.toLowerCase();
+      if (k==='arrowleft'||k==='a') input.left=true;
+      if (k==='arrowright'||k==='d') input.right=true;
+      if (k==='arrowup'||k==='w') input.up=true;
+      if (k==='arrowdown'||k==='s') input.down=true;
+      if (k==='r') reset();
+    });
+    addEventListener('keyup', (e) => {
+      const k = e.key.toLowerCase();
+      if (k==='arrowleft'||k==='a') input.left=false;
+      if (k==='arrowright'||k==='d') input.right=false;
+      if (k==='arrowup'||k==='w') input.up=false;
+      if (k==='arrowdown'||k==='s') input.down=false;
+    });
+
+    document.getElementById('reset').addEventListener('pointerdown', (e)=>{ e.preventDefault(); reset(); });
+
+    // World
+    const world = new pl.World(Vec2(0, -20)); // y-up, gravity down
+
+    // Ground/terrain
+    const ground = world.createBody();
+
+    // Trials-ish terrain points (meters)
+    const pts = [
+      Vec2(-10, 0),
+      Vec2(0, 0),
+      Vec2(10, 0.1),
+      Vec2(18, 1.0),
+      Vec2(24, 2.2),
+      Vec2(30, 2.2),
+      Vec2(36, 0.6),
+      Vec2(44, 0.6),
+      Vec2(52, 2.6),
+      Vec2(60, 2.6),
+      Vec2(70, 0.8),
+      Vec2(84, 0.8),
+      Vec2(92, 3.5),
+      Vec2(102, 3.5),
+      Vec2(118, 1.0),
+      Vec2(140, 1.0),
+    ];
+    // Chain shape uses vertices in CCW order along the path
+    const chain = pl.Chain(pts, false);
+    ground.createFixture(chain, { friction: 0.95 });
+
+    // A couple “boxes” to hop on (because Trials)
+    function addBox(x,y,w,h,angle=0) {
+      const b = world.createBody({ type:'static', position:Vec2(x,y), angle });
+      b.createFixture(pl.Box(w/2,h/2), { friction: 0.9 });
+      return b;
+    }
+    addBox(26, 2.9, 2.2, 0.4, 0.15);
+    addBox(58, 3.4, 2.4, 0.5, -0.2);
+    addBox(92, 4.2, 3.5, 0.45, 0.10);
+
+    // Bike
+    let chassis, rearWheel, frontWheel, rearJoint, frontJoint;
+    const cfg = {
+      wheelR: 0.42,
+      wheelFriction: 2.4,     // contact grip
+      motorSpeed: 0,          // rad/s setpoint
+      maxMotorTorque: 55,     // rear drive strength
+      leanTorque: 35,         // chassis torque
+      airLeanTorque: 18,      // less in air
+      suspensionHz: 5.5,      // wheel joint spring frequency
+      suspensionDamping: 0.75,
+    };
+
+    // Helper: contact check for wheels
+    function isOnGround(wheelBody) {
+      for (let ce = wheelBody.getContactList(); ce; ce = ce.next) {
+        const c = ce.contact;
+        if (!c.isTouching()) continue;
+        // If touching anything other than chassis/wheels, call it grounded
+        const a = c.getFixtureA().getBody();
+        const b = c.getFixtureB().getBody();
+        const other = (a === wheelBody) ? b : a;
+        if (other !== chassis && other !== rearWheel && other !== frontWheel) return true;
+      }
+      return false;
+    }
+
+    function createBike() {
+      // Chassis: a box + a small “seat” for better collision
+      chassis = world.createBody({
+        type:'dynamic',
+        position: Vec2(4, 4.0),
+        angularDamping: 1.2,
+        linearDamping: 0.2
+      });
+      chassis.createFixture(pl.Box(0.85, 0.18, Vec2(0,0), 0), { density: 1.0, friction: 0.4 });
+      chassis.createFixture(pl.Box(0.35, 0.12, Vec2(0.25,0.25), 0), { density: 0.6, friction: 0.4 });
+
+      // Wheels
+      rearWheel = world.createBody({ type:'dynamic', position: Vec2(3.25, 3.2), angularDamping: 0.4 });
+      frontWheel = world.createBody({ type:'dynamic', position: Vec2(4.75, 3.2), angularDamping: 0.4 });
+
+      rearWheel.createFixture(pl.Circle(cfg.wheelR), { density: 1.2, friction: cfg.wheelFriction });
+      frontWheel.createFixture(pl.Circle(cfg.wheelR), { density: 1.2, friction: cfg.wheelFriction });
+
+      // Wheel joints = suspension. Using WheelJoint (spring along local axis)
+      // axis points "up" in chassis local space => Vec2(0,1)
+      rearJoint = world.createJoint(pl.WheelJoint({
+        motorSpeed: 0,
+        maxMotorTorque: cfg.maxMotorTorque,
+        enableMotor: true,
+        frequencyHz: cfg.suspensionHz,
+        dampingRatio: cfg.suspensionDamping
+      }, chassis, rearWheel, rearWheel.getPosition(), Vec2(0,1)));
+
+      frontJoint = world.createJoint(pl.WheelJoint({
+        motorSpeed: 0,
+        maxMotorTorque: 0,
+        enableMotor: false,
+        frequencyHz: cfg.suspensionHz,
+        dampingRatio: cfg.suspensionDamping
+      }, chassis, frontWheel, frontWheel.getPosition(), Vec2(0,1)));
+    }
+
+    function destroyBike() {
+      if (rearJoint) world.destroyJoint(rearJoint);
+      if (frontJoint) world.destroyJoint(frontJoint);
+      if (rearWheel) world.destroyBody(rearWheel);
+      if (frontWheel) world.destroyBody(frontWheel);
+      if (chassis) world.destroyBody(chassis);
+      rearJoint = frontJoint = null;
+      rearWheel = frontWheel = chassis = null;
+    }
+
+    function reset() {
+      destroyBike();
+      createBike();
+      cam.x = 0; cam.y = 0;
+    }
+    reset();
+
+    // Camera + render scale
+    const ppm = 70; // pixels per meter
+    const cam = { x: 0, y: 0 };
+
+    function w2s(v) {
+      return {
+        x: (v.x - cam.x) * ppm + innerWidth * 0.35,
+        y: innerHeight * 0.70 - (v.y - cam.y) * ppm
+      };
+    }
+
+    const statsEl = document.getElementById('stats');
+
+    // Main loop
+    let last = performance.now();
+    function loop(now) {
+      const dt = Math.min(1/30, (now - last) / 1000);
+      last = now;
+
+      // Controls
+      const throttle = (input.right ? 1 : 0) + (input.left ? -1 : 0);
+      const lean = (input.up ? 1 : 0) + (input.down ? -1 : 0);
+
+      const rearGround = isOnGround(rearWheel);
+      const frontGround = isOnGround(frontWheel);
+      const grounded = rearGround || frontGround;
+
+      // Rear motor speed: sign matters. Box2D wheels typically want motorSpeed with opposite sign depending on axis.
+      // If it goes backward on your device, flip the sign here.
+      const targetSpeed = -throttle * 28; // rad/s
+      rearJoint.setMotorSpeed(targetSpeed);
+      rearJoint.setMaxMotorTorque(cfg.maxMotorTorque);
+
+      // Lean: apply torque to chassis. Less torque in air for “Trials but not helicopter.”
+      const t = (grounded ? cfg.leanTorque : cfg.airLeanTorque) * lean;
+      chassis.applyTorque(t, true);
+
+      // Small “anti-spinout” stability: damp crazy angular velocities a bit
+      const av = chassis.getAngularVelocity();
+      chassis.setAngularVelocity(av * 0.995);
+
+      // Step physics
+      world.step(dt, 8, 3);
+
+      // Camera follows chassis
+      const p = chassis.getPosition();
+      cam.x = p.x - 3.0;
+      cam.y = p.y - 2.2;
+
+      // Crash/recovery: if flipped hard, just reset (Trials would ragdoll; we’re skipping the ER visit)
+      const angle = chassis.getAngle();
+      const wrapped = Math.atan2(Math.sin(angle), Math.cos(angle));
+      if (Math.abs(wrapped) > 2.2 && grounded) reset();
+
+      // Render
+      render();
+
+      // Stats
+      const v = chassis.getLinearVelocity();
+      statsEl.textContent = `x=${p.x.toFixed(1)}m  v=${v.x.toFixed(1)}  angle=${(wrapped*57.3).toFixed(0)}°  grounded=${grounded}`;
+
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+
+    function render() {
+      ctx.fillStyle = '#070a10';
+      ctx.fillRect(0,0,innerWidth,innerHeight);
+
+      // Terrain line
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#334155';
+      ctx.beginPath();
+      for (let i=0; i<pts.length; i++) {
+        const s = w2s(pts[i]);
+        if (i===0) ctx.moveTo(s.x, s.y);
+        else ctx.lineTo(s.x, s.y);
+      }
+      ctx.stroke();
+
+      // Draw static boxes (iterate bodies)
+      for (let b = world.getBodyList(); b; b = b.getNext()) {
+        if (b.getType() !== 'static') continue;
+        for (let f = b.getFixtureList(); f; f = f.getNext()) {
+          const shape = f.getShape();
+          if (shape.getType() !== 'polygon') continue;
+          const verts = shape.m_vertices;
+          ctx.fillStyle = 'rgba(15,23,42,0.95)';
+          ctx.strokeStyle = 'rgba(148,163,184,0.35)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let i=0; i<verts.length; i++) {
+            const w = b.getWorldPoint(verts[i]);
+            const s = w2s(w);
+            if (i===0) ctx.moveTo(s.x,s.y); else ctx.lineTo(s.x,s.y);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+
+      // Bike
+      drawWheel(rearWheel, '#e2e8f0');
+      drawWheel(frontWheel, '#e2e8f0');
+      drawChassis(chassis);
+    }
+
+    function drawWheel(body, color) {
+      const p = body.getPosition();
+      const a = body.getAngle();
+      const s = w2s(p);
+      const r = cfg.wheelR * ppm;
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI*2); ctx.stroke();
+
+      // spoke
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y);
+      ctx.lineTo(s.x + Math.cos(a) * r, s.y - Math.sin(a) * r);
+      ctx.stroke();
+    }
+
+    function drawChassis(body) {
+      const p = body.getPosition();
+      const a = body.getAngle();
+
+      // approximate chassis poly for drawing
+      const corners = [
+        Vec2(-0.85,-0.18), Vec2(0.85,-0.18), Vec2(0.85,0.18), Vec2(-0.85,0.18)
+      ].map(v => body.getWorldPoint(v));
+
+      ctx.fillStyle = 'rgba(165,180,252,0.22)';
+      ctx.strokeStyle = '#a5b4fc';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      corners.forEach((w,i)=>{
+        const s = w2s(w);
+        if (!i) ctx.moveTo(s.x,s.y); else ctx.lineTo(s.x,s.y);
+      });
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // rider dot
+      const head = body.getWorldPoint(Vec2(0.25, 0.65));
+      const hs = w2s(head);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.beginPath(); ctx.arc(hs.x, hs.y, 10, 0, Math.PI*2); ctx.fill();
+    }
+  })();
+  </script>
+</body>
+</html>
